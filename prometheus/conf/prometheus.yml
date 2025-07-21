@@ -1,0 +1,76 @@
+# 生产环境Prometheus配置文件
+# 全局配置
+global:
+  scrape_interval: 15s  # 抓取间隔，生产环境建议15-60s
+  evaluation_interval: 15s  # 规则评估间隔
+  scrape_timeout: 10s  # 抓取超时时间
+  external_labels:  # 外部标签，用于联邦和远程存储
+    monitor: 'production-monitor'
+
+# 告警配置
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # 如需配置Alertmanager，请取消注释并添加地址
+          # - alertmanager:9093
+
+# 规则文件配置
+rule_files:
+  - "alert.rules.yml"  # 告警规则文件
+  # - "recording.rules.yml"  # 记录规则文件（如需要）
+
+# 抓取配置
+scrape_configs:
+  # 监控Prometheus自身
+  - job_name: 'prometheus'
+    metrics_path: '/metrics'
+    scheme: 'http'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          instance: 'prometheus-server'
+
+  # 监控Grafana
+  - job_name: 'grafana'
+    metrics_path: '/metrics'
+    scheme: 'http'
+    static_configs:
+      - targets: ['grafana:3000']
+        labels:
+          instance: 'grafana-server'
+
+  # MySQL监控
+  - job_name: 'mysql'
+    metrics_path: '/metrics'
+    scheme: 'http'
+    static_configs:
+      - targets: ['mysqld-exporter:9104']
+        labels:
+          instance: 'mysql-server'
+          service: 'mysql'
+    relabel_configs:
+      - source_labels: [__meta_docker_container_name]
+        regex: /mysqld-exporter
+        action: keep
+
+  # Spring Boot应用监控
+  - job_name: 'springboot-app'
+    metrics_path: '/actuator/prometheus'
+    scheme: 'http'
+    static_configs:
+      - targets: ['springboot-app:8080']
+        labels:
+          instance: 'springboot-service'
+          service: 'springboot'
+    relabel_configs:
+      - source_labels: [__meta_docker_container_name]
+        regex: /springboot-app
+        action: keep
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # 可添加其他监控目标，如node-exporter、应用服务等
+  # - job_name: 'node'
+  #   static_configs:
+  #     - targets: ['node-exporter:9100']

@@ -1,0 +1,207 @@
+services:
+  mysqld-exporter:
+    # 国内可访问的MySQL exporter镜像
+    image: prom/mysqld-exporter:v0.13.0
+    # 备选国内镜像
+    # image: registry.cn-hangzhou.aliyuncs.com/monitoring/mysqld-exporter:v0.13.0
+    container_name: mysqld-exporter
+    restart: always
+    user: root
+    volumes:
+        - ./mysqld-exporter/config:/etc/mysqld-exporter
+      environment:
+        - DATA_SOURCE_NAME=root:password@(mysql:3306)/
+        - MYSQLD_EXPORTER_COLLECT_INFORMATION_SCHEMA_TABLES=true
+        - MYSQLD_EXPORTER_COLLECT_PERFORMANCE_SCHEMA_TABLE_IO_WAITS=true
+      ports:
+        - "9104:9104"
+      networks:
+        - monitor-network
+      deploy:
+        resources:
+          limits:
+            cpus: '0.2'
+            memory: 256M
+          reservations:
+            cpus: '0.1'
+            memory: 128M
+      healthcheck:
+        test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9104/metrics"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 30s
+
+  mysql:
+    image: mysql:5.7
+    # 备选国内镜像
+    # image: registry.cn-hangzhou.aliyuncs.com/mysql/mysql-server:5.7
+    container_name: mysql
+    restart: always
+    user: root
+    volumes:
+        - ./mysql/data:/var/lib/mysql
+        - ./mysql/conf:/etc/mysql/conf.d
+        - ./mysql/logs:/var/log/mysql
+      environment:
+        - MYSQL_ROOT_PASSWORD=password
+        - MYSQL_DATABASE=test
+        - MYSQL_USER=exporter
+        - MYSQL_PASSWORD=exporterpass
+      ports:
+        - "3306:3306"
+      networks:
+        - monitor-network
+      deploy:
+        resources:
+          limits:
+            cpus: '1'
+            memory: 2G
+          reservations:
+            cpus: '0.5'
+            memory: 1G
+      healthcheck:
+        test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-ppassword"]
+        interval: 10s
+        timeout: 5s
+        retries: 5
+
+  prometheus:
+    # 国内可访问的Prometheus镜像，提供多个选项供测试
+    image: prom/prometheus:v2.37.0
+    # 备选镜像1: 阿里云镜像
+    # image: registry.cn-hangzhou.aliyuncs.com/monitoring/prometheus:v2.37.0
+    # 备选镜像2: 网易云镜像
+    # image: hub.c.163.com/monitoring/prometheus:v2.37.0
+    container_name: prometheus
+    restart: always
+    user: root
+    volumes:
+      - ./prometheus/conf:/etc/prometheus
+      - ./prometheus/data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-admin-api'
+      - '--log.level=info'
+    ports:
+      - "9090:9090"
+    networks:
+      - monitor-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  springboot-app:
+    # Spring Boot应用示例
+    build:
+      context: ./springboot-app
+      dockerfile: Dockerfile
+    image: springboot-monitor-demo:1.0.0
+    container_name: springboot-app
+    restart: always
+    user: root
+    volumes:
+      - ./springboot-app/logs:/app/logs
+      - ./springboot-app/config:/app/config
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - SERVER_PORT=8080
+      - MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=health,info,prometheus,metrics
+      - MANAGEMENT_METRICS_EXPORT_PROMETHEUS_ENABLED=true
+      - LOGGING_FILE_NAME=/app/logs/app.log
+    ports:
+      - "8080:8080"
+    networks:
+      - monitor-network
+    depends_on:
+      - mysql
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  grafana:
+    # 国内可访问的Grafana镜像，提供多个选项供测试
+    image: grafana/grafana:8.5.22
+    # 备选镜像1: 阿里云镜像
+    # image: registry.cn-hangzhou.aliyuncs.com/monitoring/grafana:8.5.22
+    # 备选镜像2: 网易云镜像
+    # image: hub.c.163.com/monitoring/grafana:8.5.22
+    container_name: grafana
+    restart: always
+    user: root
+    volumes:
+      - ./grafana/data:/var/lib/grafana
+      - ./grafana/conf:/etc/grafana
+      - ./grafana/logs:/var/log/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin@123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_USERS_ALLOW_ORG_CREATE=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_SERVER_HTTP_PORT=3000
+      - GF_SERVER_PROTOCOL=http
+      - GF_LOG_MODE=file
+      - GF_LOG_LEVEL=info
+      - GF_LOG_FILE_PATH=/var/log/grafana/grafana.log
+      - GF_DATABASE_TYPE=sqlite3
+      - GF_DATABASE_PATH=/var/lib/grafana/grafana.db
+      - GF_SESSION_PROVIDER=file
+      - GF_SESSION_PROVIDER_CONFIG=/var/lib/grafana/sessions
+      - GF_FEATURE_TOGGLES_ENABLE=accessControlOnCall
+    ports:
+      - "3000:3000"
+    networks:
+      - monitor-network
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  monitor-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16

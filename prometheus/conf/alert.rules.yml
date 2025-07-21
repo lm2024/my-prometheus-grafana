@@ -1,0 +1,72 @@
+# 生产环境Prometheus告警规则配置
+# 告警分组
+groups:
+- name: prometheus_alerts
+  interval: 30s  # 规则评估间隔
+  rules:
+    # Prometheus自身健康检查
+    - alert: PrometheusInstanceDown
+      expr: up{job="prometheus"} == 0
+      for: 5m
+      labels:
+        severity: critical
+        alert_type: availability
+      annotations:
+        summary: "Prometheus实例宕机"
+        description: "Prometheus实例 {{ $labels.instance }} 已宕机超过5分钟"
+        value: "{{ $value }}"
+        runbook_url: "https://prometheus.io/docs/operating/configuration/"
+
+    # Prometheus配置加载失败
+    - alert: PrometheusConfigReloadFailed
+      expr: prometheus_config_last_reload_successful == 0
+      for: 1m
+      labels:
+        severity: warning
+        alert_type: configuration
+      annotations:
+        summary: "Prometheus配置重载失败"
+        description: "Prometheus配置重载失败，可能存在语法错误"
+        value: "{{ $value }}"
+
+- name: grafana_alerts
+  interval: 30s
+  rules:
+    # Grafana服务不可用
+    - alert: GrafanaInstanceDown
+      expr: up{job="grafana"} == 0
+      for: 5m
+      labels:
+        severity: critical
+        alert_type: availability
+      annotations:
+        summary: "Grafana实例宕机"
+        description: "Grafana实例 {{ $labels.instance }} 已宕机超过5分钟"
+        value: "{{ $value }}"
+
+- name: resource_alerts
+  interval: 1m
+  rules:
+    # 高CPU使用率告警
+    - alert: HighCPUUsage
+      expr: avg(rate(node_cpu_seconds_total{mode!="idle"}[5m])) by (instance) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        alert_type: resource
+      annotations:
+        summary: "高CPU使用率告警"
+        description: "实例 {{ $labels.instance }} CPU使用率超过80%已持续5分钟 (当前值: {{ $value | humanizePercentage }})"
+        value: "{{ $value | humanizePercentage }}"
+
+    # 高内存使用率告警
+    - alert: HighMemoryUsage
+      expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.85
+      for: 10m
+      labels:
+        severity: warning
+        alert_type: resource
+      annotations:
+        summary: "高内存使用率告警"
+        description: "实例 {{ $labels.instance }} 内存使用率超过85%已持续10分钟 (当前值: {{ $value | humanizePercentage }})"
+        value: "{{ $value | humanizePercentage }}"
